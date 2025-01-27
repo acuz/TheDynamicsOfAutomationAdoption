@@ -190,7 +190,7 @@ wgt_estimates_dt <- estimation(redux_sample,
                                anticipation_num,
                                estimation_label,
                                formula_string,
-                               wgt= 'ln_dip',
+                               wgt= 'dipendenti',
                                folder_exercise) 
 
 wgt_estimates_dt[,signif := 0 < ATT_overall - crit_val*ATT_overall_se | 0 > ATT_overall + crit_val*ATT_overall_se]
@@ -210,7 +210,7 @@ wgt_estimates_dt_oa <- estimation(redux_sample[is_adopter == 1],
                                   anticipation_num,
                                   estimation_label,
                                   formula_string,
-                                  wgt= 'ln_dip',
+                                  wgt= 'dipendenti',
                                   folder_exercise) 
 
 
