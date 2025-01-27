@@ -1,0 +1,1026 @@
+---
+title: "Results presentantion - Unbalanced panel"
+author: "ac"
+date: "06/06/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(include = FALSE)
+library(here)
+library(ggplot2)
+library(data.table)
+library(stringr)
+library(kableExtra)
+library(knitr)
+```
+
+## R Markdown
+
+
+Benchmark employment results
+```{r emp_main_outputs_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'main_outputs'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             #formula,
+                                             pre_test_pval,ATT_overall,ATT_overall_se)])
+
+
+```
+
+```{r employment_plot, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+res <- export_dt[grepl('Total economy', sample_type) & weighting == 'Non-weighted']
+rownames(res) <- NULL
+res$time <- factor(res$time)
+
+if(!(sum(colnames(res) == 'crit_val'))){res$crit_val <- 2.58; print('here')}
+
+variable_label <- as.character(var_dict[var_name == res[1,variable],2])
+variable_label <- ifelse(variable_label == 'character(0)',as.character(res[1,variable]),variable_label)
+
+res <- res[time %in% factor(-4:5)]
+
+## All
+
+## Link for colors
+## https://colorbrewer2.org/#type=diverging&scheme=RdBu&n=6
+
+
+colors <- c('#d73027',
+            #fc8d59
+            #'#fee090',
+            #e0f3f8,
+            #'#91bfdb',#)
+            '#4575b4')
+
+ res[, sample_type := ifelse(control == 'notyettreated',
+                             'Adopters as controls',
+                             'Non-adopters as controls')]
+
+ res[,sample_type_pval := paste0(sample_type,
+                                 ' \nOverall AAA: ',round(ATT_overall*100,2),ifelse(signif_,'% (*)','%'),
+                                 ' \nPre-trend test pval: ',round(pre_test_pval,4))]
+ ggplot(res) +
+      geom_point(aes(x = time, y = ATT, color = sample_type_pval, shape = sample_type_pval),
+                 position = position_dodge2(0.4), size = 5) +
+      geom_errorbar(aes(x = time,
+                        ymin = ATT -crit_val*(ATT_se),#-crit_val*(ATT_se),
+                        ymax = ATT+crit_val*(ATT_se), 
+                        color = sample_type_pval, 
+                        group = sample_type_pval),width = 0.4, position = position_dodge2(0.9), cex = 1.6) +
+      geom_vline(aes(xintercept = factor(0), alpha = 0.6),
+                 linetype = 'dashed', color = 'darkred', cex = 1.2) +
+      geom_hline(aes(yintercept = 0, alpha = 0.6), cex = 1.1) +
+      theme_minimal() +
+      ggtitle(variable_label) + 
+      theme(axis.text.x = element_text(size = 16),
+            plot.background = element_rect(color = "black", size = 1),
+            plot.margin = margin(1,1,1.5,1.2, "cm"),
+            axis.text.y = element_text(size = 18),
+            panel.grid.major.y = element_line(color = 'azure3'),
+            panel.grid.major.x = element_line(color = 'azure3'),
+            panel.background = element_blank(),
+            plot.title = element_text(size = 28, face = 'bold', hjust = 0.5, vjust = 2),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            legend.title = element_text(size = 18),
+            legend.key= element_blank(),
+            legend.position = 'top',
+            legend.direction = 'horizontal',
+            legend.text = element_text(size = 18),
+            strip.text.x = element_text(size = 20, color = "black", face = "bold"),
+            strip.text.y = element_text(size = 20, color = "black", face = "bold")) +
+     # scale_x_discrete(limits = factor(-5:5)) +
+      scale_y_continuous((limits = c(-20,20))) +
+     # scale_color_grey(start = 0,
+     #                  end = 0.6, name = 'Sample')+
+      scale_shape(name = '') +
+      scale_color_manual(values = colors, name ='')+
+      scale_linetype(guide = 'none') +
+      scale_alpha(guide = 'none') +
+    #  scale_color_brewer(palette = "Set1", name = 'Sample', c = 40, l = 50) +
+      facet_wrap(~exp_excl, ncol = 1, scales = 'free')
+
+```
+
+
+
+```{r employment_size_split, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+res <- export_dt[!grepl('Total economy', sample_type)  & weighting == 'Non-weighted']
+rownames(res) <- NULL
+res$time <- factor(res$time)
+
+if(!(sum(colnames(res) == 'crit_val'))){res$crit_val <- 2.58; print('here')}
+
+variable_label <- as.character(var_dict[var_name == res[1,variable],2])
+variable_label <- ifelse(variable_label == 'character(0)',as.character(res[1,variable]),variable_label)
+
+res <- res[time %in% factor(-4:5)]
+
+## All
+
+## Link for colors
+## https://colorbrewer2.org/#type=diverging&scheme=RdBu&n=6
+
+
+colors <- c('#d73027',
+            '#fc8d59',
+            '#fee090')#,
+            #'#e0f3f8',
+            #'#91bfdb',#)
+            #'#4575b4')
+            #'
+#colors <- c('#d73027', 
+#            "#e75439",
+#            '#fc8d59',
+#             "#fda575",
+#            '#fee090',
+#             "#ffeaa6")
+
+
+
+ res[, sample_cat := gsub(' - Adopters only','',sample_type)]
+ res[, ATT_overall_oa := unique(ATT_overall[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, ATT_overall_nt := unique(ATT_overall[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, signif_oa := unique(signif_[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, signif_nt := unique(signif_[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, pre_test_pval_oa := unique(pre_test_pval[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, pre_test_pval_nt := unique(pre_test_pval[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+
+ res[, sample_type := ifelse(control == 'notyettreated',
+                             'Adopters as controls',
+                             'Non-adopters as controls')]
+
+  
+
+ 
+  res[,sample_type_pval := paste0(sample_cat,
+                                 ' \nOverall AAA: ',round(ATT_overall_nt*100,2),ifelse(signif_nt,'% (*)','%'),
+                                 ' \nPre-trend test pval: ',pre_test_pval_nt,
+                                 ' \nOnly adopters Overall AAA: ',round(ATT_overall_oa*100,2),ifelse(signif_oa,'% (*)','%'),
+                                 ' \nOnly adopters Pre-trend test pval: ',round(pre_test_pval_oa,4))]
+  
+  vec_output_print_cat <- unique(res$sample_type_pval)
+  res$sample_type_pval <- factor(res$sample_type_pval, levels = vec_output_print_cat)
+
+ 
+ ggplot(res[!grepl('Adopters as controls',sample_type)]) +
+      geom_point(aes(x = time, y = ATT, color = sample_type_pval, shape = sample_type_pval),
+                 position = position_dodge2(0.4), size = 5) +
+      geom_errorbar(aes(x = time,
+                        ymin = ATT -crit_val*(ATT_se),#-crit_val*(ATT_se),
+                        ymax = ATT+crit_val*(ATT_se), 
+                        color = sample_type_pval, 
+                        group = sample_type_pval),width = 0.4, position = position_dodge2(0.9), cex = 1.6) +
+      geom_vline(aes(xintercept = factor(0), alpha = 0.6),
+                 linetype = 'dashed', color = 'darkred', cex = 1.2) +
+      geom_hline(aes(yintercept = 0, alpha = 0.6), cex = 1.1) +
+      theme_minimal() +
+      ggtitle(variable_label) + 
+      theme(axis.text.x = element_text(size = 16),
+            plot.background = element_rect(color = "black", size = 1),
+            plot.margin = margin(1,1,1.5,1.2, "cm"),
+            axis.text.y = element_text(size = 18),
+            panel.grid.major.y = element_line(color = 'azure3'),
+            panel.grid.major.x = element_line(color = 'azure3'),
+            panel.background = element_blank(),
+            plot.title = element_text(size = 28, face = 'bold', hjust = 0.5, vjust = 2),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            legend.title = element_text(size = 18),
+            legend.key= element_blank(),
+            legend.position = 'top',
+            legend.direction = 'horizontal',
+            legend.text = element_text(size = 18),
+            strip.text.x = element_text(size = 20, color = "black", face = "bold"),
+            strip.text.y = element_text(size = 20, color = "black", face = "bold")) +
+     # scale_x_discrete(limits = factor(-5:5)) +
+      scale_y_continuous((limits = c(-20,20))) +
+     # scale_color_grey(start = 0,
+     #                  end = 0.6, name = 'Sample')+
+      scale_shape(name = '') +
+      scale_color_manual(values = colors, name ='')+
+      scale_linetype(guide = 'none') +
+      scale_alpha(guide = 'none') +
+    #  scale_color_brewer(palette = "Set1", name = 'Sample', c = 40, l = 50) +
+      facet_wrap(~exp_excl, ncol = 1, scales = 'free')
+
+
+```
+
+
+```{r employment_weighted_plot, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+res <- export_dt[grepl('Total economy', sample_type) & weighting != 'Non-weighted']
+rownames(res) <- NULL
+res$time <- factor(res$time)
+
+if(!(sum(colnames(res) == 'crit_val'))){res$crit_val <- 2.58; print('here')}
+
+variable_label <- as.character(var_dict[var_name == res[1,variable],2])
+variable_label <- ifelse(variable_label == 'character(0)',as.character(res[1,variable]),variable_label)
+
+res <- res[time %in% factor(-4:5)]
+
+## All
+
+## Link for colors
+## https://colorbrewer2.org/#type=diverging&scheme=RdBu&n=6
+
+
+colors <- c(#'#d73027',
+            #fc8d59
+            #'#fee090',
+            #e0f3f8,
+            '#91bfdb',#)
+            '#4575b4')
+
+
+ res[, sample_type := ifelse(control == 'notyettreated',
+                             'Adopters as controls',
+                             'Non-adopters as controls')]
+
+
+ res[,sample_type_pval := paste0(sample_type,
+                                 ' \nOverall AAA: ',round(ATT_overall*100,2),ifelse(signif_,'% (*)','%'),
+                                 ' \nPre-trend test pval: ',pre_test_pval)]
+ 
+ res[, exp_excl := paste0(gsub(' - ',': ',exp_excl), ' - ', 'Emp. weighted estimates')]
+ ggplot(res) +
+      geom_point(aes(x = time, y = ATT, color = sample_type_pval, shape = sample_type_pval),
+                 position = position_dodge2(0.4), size = 5) +
+      geom_errorbar(aes(x = time,
+                        ymin = ATT -crit_val*(ATT_se),#-crit_val*(ATT_se),
+                        ymax = ATT+crit_val*(ATT_se), 
+                        color = sample_type_pval, 
+                        group = sample_type_pval),width = 0.4, position = position_dodge2(0.9), cex = 1.6) +
+      geom_vline(aes(xintercept = factor(0), alpha = 0.6),
+                 linetype = 'dashed', color = 'darkred', cex = 1.2) +
+      geom_hline(aes(yintercept = 0, alpha = 0.6), cex = 1.1) +
+      theme_minimal() +
+      ggtitle(variable_label) + 
+      theme(axis.text.x = element_text(size = 16),
+            plot.background = element_rect(color = "black", size = 1),
+            plot.margin = margin(1,1,1.5,1.2, "cm"),
+            axis.text.y = element_text(size = 18),
+            panel.grid.major.y = element_line(color = 'azure3'),
+            panel.grid.major.x = element_line(color = 'azure3'),
+            panel.background = element_blank(),
+            plot.title = element_text(size = 28, face = 'bold', hjust = 0.5, vjust = 2),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            legend.title = element_text(size = 18),
+            legend.key= element_blank(),
+            legend.position = 'top',
+            legend.direction = 'horizontal',
+            legend.text = element_text(size = 18),
+            strip.text.x = element_text(size = 24, color = "black", face = "bold"),
+            strip.text.y = element_text(size = 24, color = "black", face = "bold")) +
+     # scale_x_discrete(limits = factor(-5:5)) +
+      scale_y_continuous((limits = c(-20,20))) +
+     # scale_color_grey(start = 0,
+     #                  end = 0.6, name = 'Sample')+
+      scale_shape(name = '') +
+      scale_color_manual(values = colors, name ='')+
+      scale_linetype(guide = 'none') +
+      scale_alpha(guide = 'none') +
+    #  scale_color_brewer(palette = "Set1", name = 'Sample', c = 40, l = 50) +
+      facet_wrap(~exp_excl, ncol = 1, scales = 'free')
+
+```
+
+
+```{r sales_main_outputs_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'main_outputs'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_sales',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             #formula,
+                                             pre_test_pval,ATT_overall,ATT_overall_se)])
+
+
+```
+
+
+```{r sales_size_split, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+res <- export_dt[!grepl('Total economy', sample_type)  & weighting == 'Non-weighted']
+rownames(res) <- NULL
+res$time <- factor(res$time)
+
+if(!(sum(colnames(res) == 'crit_val'))){res$crit_val <- 2.58; print('here')}
+
+variable_label <- as.character(var_dict[var_name == res[1,variable],2])
+variable_label <- ifelse(variable_label == 'character(0)',as.character(res[1,variable]),variable_label)
+
+res <- res[time %in% factor(-4:5)]
+
+## All
+
+## Link for colors
+## https://colorbrewer2.org/#type=diverging&scheme=RdBu&n=6
+
+
+colors <- c('#d73027',
+            '#fc8d59',
+            '#fee090')#,
+            #'#e0f3f8',
+            #'#91bfdb',#)
+            #'#4575b4')
+            #'
+#colors <- c('#d73027', 
+#            "#e75439",
+#            '#fc8d59',
+#             "#fda575",
+#            '#fee090',
+#             "#ffeaa6")
+
+
+ res[, sample_cat := gsub(' - Adopters only','',sample_type)]
+ res[, ATT_overall_oa := unique(ATT_overall[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, ATT_overall_nt := unique(ATT_overall[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, signif_oa := unique(signif_[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, signif_nt := unique(signif_[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, pre_test_pval_oa := unique(pre_test_pval[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, pre_test_pval_nt := unique(pre_test_pval[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+
+ res[, sample_type := ifelse(control == 'notyettreated',
+                             'Adopters as controls',
+                             'Non-adopters as controls')]
+
+  
+
+ 
+  res[,sample_type_pval := paste0(sample_cat,
+                                 ' \nOverall AAA: ',round(ATT_overall_nt*100,2),ifelse(signif_nt,'% (*)','%'),
+                                 ' \nPre-trend test pval: ',pre_test_pval_nt,
+                                 ' \nOnly adopters Overall AAA: ',round(ATT_overall_oa*100,2),ifelse(signif_oa,'% (*)','%'),
+                                 ' \nOnly adopters Pre-trend test pval: ',round(pre_test_pval_oa,4))]
+  
+  vec_output_print_cat <- unique(res$sample_type_pval)
+  res$sample_type_pval <- factor(res$sample_type_pval, levels = vec_output_print_cat)
+
+  
+  
+ ggplot(res[!grepl('Adopters as controls',sample_type)]) +
+      geom_point(aes(x = time, y = ATT, color = sample_type_pval, shape = sample_type_pval),
+                 position = position_dodge2(0.4), size = 5) +
+      geom_errorbar(aes(x = time,
+                        ymin = ATT -crit_val*(ATT_se),#-crit_val*(ATT_se),
+                        ymax = ATT+crit_val*(ATT_se), 
+                        color = sample_type_pval, 
+                        group = sample_type_pval),width = 0.4, position = position_dodge2(0.9), cex = 1.6) +
+      geom_vline(aes(xintercept = factor(0), alpha = 0.6),
+                 linetype = 'dashed', color = 'darkred', cex = 1.2) +
+      geom_hline(aes(yintercept = 0, alpha = 0.6), cex = 1.1) +
+      theme_minimal() +
+      ggtitle(variable_label) + 
+      theme(axis.text.x = element_text(size = 16),
+            plot.background = element_rect(color = "black", size = 1),
+            plot.margin = margin(1,1,1.5,1.2, "cm"),
+            axis.text.y = element_text(size = 18),
+            panel.grid.major.y = element_line(color = 'azure3'),
+            panel.grid.major.x = element_line(color = 'azure3'),
+            panel.background = element_blank(),
+            plot.title = element_text(size = 28, face = 'bold', hjust = 0.5, vjust = 2),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            legend.title = element_text(size = 18),
+            legend.key= element_blank(),
+            legend.position = 'top',
+            legend.direction = 'horizontal',
+            legend.text = element_text(size = 18),
+            strip.text.x = element_text(size = 20, color = "black", face = "bold"),
+            strip.text.y = element_text(size = 20, color = "black", face = "bold")) +
+     # scale_x_discrete(limits = factor(-5:5)) +
+      scale_y_continuous((limits = c(-20,20))) +
+     # scale_color_grey(start = 0,
+     #                  end = 0.6, name = 'Sample')+
+      scale_shape(name = '') +
+      scale_color_manual(values = colors, name ='')+
+      scale_linetype(guide = 'none') +
+      scale_alpha(guide = 'none') +
+    #  scale_color_brewer(palette = "Set1", name = 'Sample', c = 40, l = 50) +
+      facet_wrap(~exp_excl, ncol = 1, scales = 'free')
+
+
+
+```
+
+
+
+```{r prod_main_outputs_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'main_outputs'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_prod',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             #formula,
+                                             pre_test_pval,ATT_overall,ATT_overall_se)])
+
+
+```
+
+
+```{r prod_size_split, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+res <- export_dt[!grepl('Total economy', sample_type)  & weighting == 'Non-weighted']
+rownames(res) <- NULL
+res$time <- factor(res$time)
+
+if(!(sum(colnames(res) == 'crit_val'))){res$crit_val <- 2.58; print('here')}
+
+variable_label <- as.character(var_dict[var_name == res[1,variable],2])
+variable_label <- ifelse(variable_label == 'character(0)',as.character(res[1,variable]),variable_label)
+
+res <- res[time %in% factor(-4:5)]
+
+## All
+
+## Link for colors
+## https://colorbrewer2.org/#type=diverging&scheme=RdBu&n=6
+
+
+colors <- c('#d73027',
+            '#fc8d59',
+            '#fee090')#,
+            #'#e0f3f8',
+            #'#91bfdb',#)
+            #'#4575b4')
+            #'
+#colors <- c('#d73027', 
+#            "#e75439",
+#            '#fc8d59',
+#             "#fda575",
+#            '#fee090',
+#             "#ffeaa6")
+
+
+ res[, sample_cat := gsub(' - Adopters only','',sample_type)]
+ res[, ATT_overall_oa := unique(ATT_overall[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, ATT_overall_nt := unique(ATT_overall[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, signif_oa := unique(signif_[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, signif_nt := unique(signif_[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, pre_test_pval_oa := unique(pre_test_pval[grepl('Adopters only',sample_type)]) , by = sample_cat]
+ res[, pre_test_pval_nt := unique(pre_test_pval[!grepl('Adopters only',sample_type)]) , by = sample_cat]
+
+ res[, sample_type := ifelse(control == 'notyettreated',
+                             'Adopters as controls',
+                             'Non-adopters as controls')]
+
+  
+
+ 
+  res[,sample_type_pval := paste0(sample_cat,
+                                 ' \nOverall AAA: ',round(ATT_overall_nt*100,2),ifelse(signif_nt,'% (*)','%'),
+                                 ' \nPre-trend test pval: ',pre_test_pval_nt,
+                                 ' \nOnly adopters Overall AAA: ',round(ATT_overall_oa*100,2),ifelse(signif_oa,'% (*)','%'),
+                                 ' \nOnly adopters Pre-trend test pval: ',round(pre_test_pval_oa,4))]
+  
+  vec_output_print_cat <- unique(res$sample_type_pval)
+  res$sample_type_pval <- factor(res$sample_type_pval, levels = vec_output_print_cat)
+
+  
+ ggplot(res[!grepl('Adopters as controls',sample_type)]) +
+      geom_point(aes(x = time, y = ATT, color = sample_type_pval, shape = sample_type_pval),
+                 position = position_dodge2(0.4), size = 5) +
+      geom_errorbar(aes(x = time,
+                        ymin = ATT -crit_val*(ATT_se),#-crit_val*(ATT_se),
+                        ymax = ATT+crit_val*(ATT_se), 
+                        color = sample_type_pval, 
+                        group = sample_type_pval),width = 0.4, position = position_dodge2(0.9), cex = 1.6) +
+      geom_vline(aes(xintercept = factor(0), alpha = 0.6),
+                 linetype = 'dashed', color = 'darkred', cex = 1.2) +
+      geom_hline(aes(yintercept = 0, alpha = 0.6), cex = 1.1) +
+      theme_minimal() +
+      ggtitle(variable_label) + 
+      theme(axis.text.x = element_text(size = 16),
+            plot.background = element_rect(color = "black", size = 1),
+            plot.margin = margin(1,1,1.5,1.2, "cm"),
+            axis.text.y = element_text(size = 18),
+            panel.grid.major.y = element_line(color = 'azure3'),
+            panel.grid.major.x = element_line(color = 'azure3'),
+            panel.background = element_blank(),
+            plot.title = element_text(size = 28, face = 'bold', hjust = 0.5, vjust = 2),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            legend.title = element_text(size = 18),
+            legend.key= element_blank(),
+            legend.position = 'top',
+            legend.direction = 'horizontal',
+            legend.text = element_text(size = 18),
+            strip.text.x = element_text(size = 20, color = "black", face = "bold"),
+            strip.text.y = element_text(size = 20, color = "black", face = "bold")) +
+     # scale_x_discrete(limits = factor(-5:5)) +
+      scale_y_continuous((limits = c(-20,20))) +
+     # scale_color_grey(start = 0,
+     #                  end = 0.6, name = 'Sample')+
+      scale_shape(name = '') +
+      scale_color_manual(values = colors, name ='')+
+      scale_linetype(guide = 'none') +
+      scale_alpha(guide = 'none') +
+    #  scale_color_brewer(palette = "Set1", name = 'Sample', c = 40, l = 50) +
+      facet_wrap(~exp_excl, ncol = 1, scales = 'free')
+
+```
+
+
+
+
+### Split exercise for each variable
+```{r size_split_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'size_split'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2_autn_rob_ai',estimates_file)]))
+
+
+size_split_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             #formula,
+                                             pre_test_pval,ATT_overall,ATT_overall_se)])
+
+
+```
+
+
+```{r emp_weight_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'emp_weighted_estimates'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2_autn_rob_ai',estimates_file)]))
+
+
+emp_wgt_dt <- unique(export_dt[spike == 'spike2_autn_rob_ai',list(spike,variable,
+                                                                   sample_type,exp_excl,balanced_panel,
+                                                                   weighting,control, anticipation,
+                                                                   #formula,
+                                                                   pre_test_pval,ATT_overall,ATT_overall_se)])
+
+emp_wgt_dt[,weighting := 'Emp. weighted']
+
+```
+
+
+
+```{r tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+
+complete_simple_dt_size_split <- unique(size_split_dt[!(variable %in% c('ln_dip','ln_prod','ln_sales')),
+                                                      list(spike,variable,sample_type,exp_excl,balanced_panel,
+                                                        weighting,control, anticipation,
+                                                        pre_test_pval,ATT_overall,ATT_overall_se)])
+
+complete_simple_dt_wgt <- unique(emp_wgt_dt[!(variable %in% c('ln_dip','ln_prod','ln_sales')) &
+                                              !grepl('Adopters',sample_type) & spike == 'spike2_autn_rob_ai',
+                                              list(spike,variable,sample_type,exp_excl,balanced_panel,
+                                                        weighting,control, anticipation,
+                                                        pre_test_pval,ATT_overall,ATT_overall_se)])
+complete_simple_dt_wgt[,sample_type := 'Emp. weighted estimates']
+
+complete_simple_dt <- data.table(rbind(complete_simple_dt_size_split, complete_simple_dt_wgt))
+
+
+# Add significance column
+complete_simple_dt[, ATT_significant := as.integer((ATT_overall - crit_val*ATT_overall_se > 0) | (ATT_overall + crit_val*ATT_overall_se < 0))]
+
+
+complete_simple_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_simple_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+
+
+# Split the dataset by spike type
+split_data <- split(complete_simple_dt, complete_simple_dt$spike)
+
+# Export each subset to a CSV file
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+for(spike_type in names(split_data))
+{
+  fwrite(split_data[[spike_type]],
+         file = here::here(empirical_segment,exercise,'summary_tables',paste0(spike_type, ".csv")),
+         sep = ';')
+}
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- if (value > 0.03) {
+    "&#x2191;"  # Up arrow
+  } else if (value > 0) {
+    "&#x2197;"  # Up-right arrow
+  } else if (value < -0.03) {
+    "&#x2193;"  # Down arrow
+  } else if (value < 0) {
+    "&#x2198;"  # Down-right arrow
+  } else {
+    ""
+  }
+  
+  bg_color <- if (value > 0.03) {
+    "background-color: rgba(0, 128, 0, 0.3);"
+  } else if (value > 0) {
+    "background-color: rgba(144, 238, 144, 0.3);"
+  } else if (value < -0.03) {
+    "background-color: rgba(255, 0, 0, 0.3);"
+  } else if (value < 0) {
+    "background-color: rgba(240, 128, 128, 0.3);"  # light red
+  } else {
+    ""
+  }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_simple_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_simple_dt[,ATT_overall_formatted := format_att(ATT_overall,ATT_significant)]
+
+complete_simple_dt[,conf_int := paste0('(',round(100*(ATT_overall - crit_val*ATT_overall_se),2),',',round(100*(ATT_overall + crit_val*ATT_overall_se),2),')')]
+
+
+
+complete_simple_dt_formatted <- complete_simple_dt[grepl('1',anticipation),list(variable,sample_type,anticipation,
+                                                                                pre_test_pval_formatted,ATT_overall_formatted)]
+
+
+#kable(complete_simple_dt_formatted, escape = FALSE) %>%
+#  kable_styling(full_width = F) %>%
+#  column_spec(5) %>%
+#  column_spec(6) %>%
+#  print()
+
+
+unique_spikes <- unique(complete_simple_dt$spike)
+
+for (spike_value in unique_spikes)
+  {
+  subset_df <- complete_simple_dt[variable != 'ln_personale' & spike == spike_value]
+  
+  # Extract additional heading information
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  # Add custom heading
+  cat(paste0("### Spike: ", spike_type, "\n"))
+  cat(paste0("**Weighting**: ", weighting, "  \n"))
+  cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+  
+  subset_df <- subset_df[order(variable)]
+  # Create the formatted table
+  kable(subset_df[grepl('1',anticipation),list(var_label,sample_type,anticipation,                                                                                pre_test_pval_formatted,ATT_overall_formatted,conf_int)], escape = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+  column_spec(1, bold = T) %>%
+  print()
+  
+  cat("\n\n")  # Add some space between tables
+}
+
+
+```
+
+## Transferable latex table
+```{r tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_simple_dt_size_split <- unique(size_split_dt[variable != 'ln_dip',list(spike,variable,sample_type,exp_excl,balanced_panel,
+                                                        weighting,control, anticipation,
+                                                        pre_test_pval,ATT_overall,ATT_overall_se)])
+
+complete_simple_dt_wgt <- unique(emp_wgt_dt[variable != 'ln_dip' & !grepl('Adopters',sample_type),list(spike,variable,sample_type,exp_excl,balanced_panel,
+                                                        weighting,control, anticipation,
+                                                        pre_test_pval,ATT_overall,ATT_overall_se)])
+complete_simple_dt_wgt[variable != 'ln_personale',sample_type := 'Emp. weighted estimates']
+
+complete_simple_dt <- data.table(rbind(complete_simple_dt_size_split, complete_simple_dt_wgt))
+
+# Add significance column
+complete_simple_dt[, ATT_significant := as.integer((ATT_overall - crit_val*ATT_overall_se > 0) | (ATT_overall + crit_val*ATT_overall_se < 0))]
+
+
+select_var <- function(x)
+  {
+  var_dict[var_name == unique(x)]$var_label
+  }
+complete_simple_dt[,var_label := select_var(variable) , by = variable]
+complete_simple_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+
+# Split the dataset by spike type
+split_data <- split(complete_simple_dt, complete_simple_dt$spike)
+
+# Export each subset to a CSV file
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+for(spike_type in names(split_data))
+{
+  fwrite(split_data[[spike_type]],
+         file = here::here(empirical_segment,exercise,'summary_tables',paste0(spike_type, ".csv")),
+         sep = ';')
+}
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+  arrow <- if (value > 0.03) {
+    "$\\uparrow$"
+  } else if (value > 0) {
+    "$\\nearrow$"
+  } else if (value < -0.03) {
+    "$\\downarrow$"
+  } else if (value < 0) {
+    "$\\searrow$"
+  } else {
+    ""
+  }
+  
+  color <- if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+complete_simple_dt[, pre_test_pval_formatted := sapply(pre_test_pval, format_pval)]
+complete_simple_dt[, ATT_overall_formatted := mapply(format_att, ATT_overall, ATT_significant)]
+
+complete_simple_dt[,conf_int := paste0('(',round(100*(ATT_overall - crit_val*ATT_overall_se),2),',',round(100*(ATT_overall + crit_val*ATT_overall_se),2),')')]
+
+
+unique_spikes <- unique(complete_simple_dt$spike)
+
+
+
+for (spike_value in unique_spikes) {
+  subset_df <- complete_simple_dt[spike == spike_value]
+  
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  cat(sprintf("\\subsection{Spike: %s}\n", spike_type))
+  cat(sprintf("\\textbf{Weighting}: %s\\\\\n", weighting))
+  cat(sprintf("\\textbf{Exclusion}: %s\\\\\n\n", exp_excl))
+  
+  subset_df <- subset_df[order(variable)]
+  
+ 
+  # Filter for rows with 'Ant. years = 1' and prepare the table data
+  table_data <- subset_df[grepl('1', anticipation), 
+                          list(var_label, sample_type, anticipation, 
+                               pre_test_pval_formatted, ATT_overall_formatted,conf_int)]
+  
+  # Create a group index for alternating colors
+  group_index <- cumsum(c(TRUE, table_data$var_label[-1] != table_data$var_label[-nrow(table_data)]))
+  
+  # Create the table
+  latex_table <- kable(table_data, format = "latex", escape = FALSE, booktabs = TRUE) %>%
+    kable_styling(latex_options = c("striped", "hold_position")) %>%
+    column_spec(1, bold = TRUE) %>%
+    row_spec(0, bold = TRUE)
+  
+  # Apply alternating background colors and add space between groups
+  for (i in unique(group_index)) {
+    rows <- which(group_index == i)
+    color <- if (i %% 2 == 0) "lightgray!30" else "white"
+    latex_table <- latex_table %>%
+      row_spec(rows, background = color)
+    
+    if (i < max(group_index)) {
+      latex_table <- latex_table %>%
+        row_spec(max(rows), extra_latex_after = "\\addlinespace[0.5em]\\midrule\\addlinespace[0.5em]")
+    }
+  }
+  
+  print(latex_table)
+
+  cat("\n\n")
+}
+
+write(latex_table, file = 'split_size_all_vars_table.txt')
+#print(as.character(latex_table))
+
+```

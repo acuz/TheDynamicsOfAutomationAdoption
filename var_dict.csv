@@ -1,0 +1,59 @@
+var_name;var_label
+ln_dip;Employment (log)
+ln_dip_2;Employment from leed (log)
+ln_hirings;Hirings (log)
+ln_separations;Separations (log)
+ln_retr_just_hired;Average Salary of new employees (log)
+ln_retr_incumbents_staying;Average Salary of incumbent employees (log)
+ln_retr_will_separate;Average Salary of separating employees (log)
+ln_add;Employment - Addetti (log)
+ln_sales;Sales (log)
+ln_sales_new;Sales (log)
+ln_vadd;Value added (log)
+ln_prod;Productivity (log)
+ln_vert_int;Vertical integration (log)
+vert_int;Vertical integration
+ln_lab_share;Labor share (log) 
+ln_exp_val;Export (log)
+ln_exp_autoai_val;Export in automation/AI goods (log)
+ln_personale;Wage bill (log)
+ln_sal_stip;Wage bill (log)
+ln_acquisti;Inputs costs - Goods (log)
+ln_beniserv;Inputs costs - Goods and services (log)
+ln_imp_val;Import (log)
+avg_retr_sett;Average salary
+ln_avg_retr_sett;Average salary (log)
+ln_IQR_retr_sett;Interquartile range of salaries (log)
+ln_sd_retr_sett;Variance of salaries (log)
+ln_top10_med;Top10/Median salary (log)
+ln_top10; Top10 (log)
+ln_bottom10; Bottom10 (log)
+top10_med; Top10/Median salary 
+ln_top10_bottom10; Top10/Bottom10 salary (log)
+top10_bottom10; Top10/Bottom10 salary
+sh_Middle_management;Share of middle managers
+sh_Manager;Share of managers
+sh_Trainee;Share of trainees
+sh_Blue_collar;Share of blue collars
+sh_White_collar;Share of white collars
+sh_titolo_low;Low educated share
+sh_titolo_medium;Medium educated share
+sh_titolo_high;High educated share
+sh_permanent;Share of permanents jobs
+sh_temporary;Share of temporarys jobs
+sh_full_time;Share of full time jobs 
+sh_part_time;Share of part time jobs
+sh_cl_eta_1;Share of workers in 19-29
+sh_cl_eta_2;Share of workers in 30-49
+sh_cl_eta_3;Share of workers 50 and older
+ln_retr_Manager;Average salary of managers (log)
+ln_retr_Blue_collar;Average salary of blue collars (log)
+ln_retr_White_collar;Average salary of white collars (log)
+ln_retr_permanent;Average salary of permanent jobs (log)
+ln_retr_temporary;Average salary of temporary jobs (log)
+ln_retr_cl_eta_1;Average salary of workers in 19-29 (log)
+ln_retr_cl_eta_2;Average salary of workers in 30-49 (log)
+ln_retr_cl_eta_3;Average salary of workers 50 and older (log)
+ln_retr_tenure_class_.10;Average salary of workers with long tenure (>10, log)
+ ln_retr_tenure_class_3.10;Average salary of workers with medium tenure (3-10, log)
+ln_retr_tenure_class_1.3;Average salary of workers with short tenure(<3, log)

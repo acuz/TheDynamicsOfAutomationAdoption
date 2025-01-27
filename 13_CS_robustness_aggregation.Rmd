@@ -1,0 +1,2117 @@
+---
+title: "CS_robustness_aggregation"
+author: "ac"
+date: "25/7/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(include = FALSE)
+library(here)
+library(ggplot2)
+library(data.table)
+library(stringr)
+library(kableExtra)
+library(knitr)
+
+
+dict_sample_type <- data.table(string = c("Total economy-Non-weighted",
+                                          "Micro/Small firms (0-19)-Non-weighted" ,
+                                          "Small firms (20-49)-Non-weighted",
+                                          "Medium and large firms (+50)-Non-weighted", 
+                                          "Total economy-ln_dip - Weighted",
+                                          "Total economy - Adopters only-Non-weighted",
+                                          "Micro/Small firms (0-19) - Adopters only-Non-weighted",
+                                          "Small firms (20-49) - Adopters only-Non-weighted",
+                                          "Medium and large firms (+50) - Adopters only-Non-weighted",
+                                          "Total economy - Adopters only-ln_dip - Weighted"),
+                               val = 1:10)
+
+```
+
+
+## Placebo exercise for the benchmark estimates
+```{r placebo_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'placebo_test'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             #formula,
+                                             pre_test_pval,ATT_overall,ATT_overall_se,crit_val, signif,
+                                             signif, placebo_type)])
+
+
+```
+
+### Showing the table in html
+```{r placebo_tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- ""
+  
+  bg_color <-
+    if (significant) 
+      {
+        if (value > 0.03) {
+        "background-color: rgba(0, 128, 0, 0.3);"
+      } else if (value > 0) {
+        "background-color: rgba(144, 238, 144, 0.3);"
+      } else if (value < -0.03) {
+        "background-color: rgba(255, 0, 0, 0.3);"
+      } else if (value < 0) {
+        "background-color: rgba(240, 128, 128, 0.3);"  # light red
+      } else {
+        ""
+      }
+    } else {
+        ""
+      }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,
+                                                           ATT_overall_formatted, confidence_interval)]
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, placebo_type,weighting,                                                                               pre_test_pval_formatted,ATT_overall_formatted, confidence_interval)]
+
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, placebo) 
+  {
+  subset_df <- data[placebo_type == placebo]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for both placebo types
+random_timing_data <- prepare_data(df, "Random timing")
+random_treatment_data <- prepare_data(df, "Random treatment")
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(random_timing_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         c("pre_test_pval_formatted.rt", "ATT_overall_formatted.rt", "confidence_interval.rt"))
+
+setnames(random_treatment_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         c("pre_test_pval_formatted.rtreat", "ATT_overall_formatted.rtreat", "confidence_interval.rtreat"))
+
+# Merge the datasets
+combined_data <- merge(random_timing_data, random_treatment_data, by = c("var_label", "sample_type", "control","weighting"), all = TRUE)
+
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+combined_table <- kable(select_table[order(control,ordering_num)][,-c(2,3,10)], escape = FALSE) %>%
+                  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+                  add_header_above(c(" " = 1,"Random timing" = 3, "Random treatment" = 3)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+print(combined_table)
+
+
+```
+
+### Transferable latex table
+```{r placebo_tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+ 
+   arrow <- ""
+  
+  color <- if(significant)
+    {if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }} else{
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,ATT_overall_formatted,
+                                                           confidence_interval)]
+
+
+
+
+subset_df <- complete_overall_dt
+
+
+
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  cat(sprintf("\\subsection{Spike: %s}\n", spike_type))
+  cat(sprintf("\\textbf{Weighting}: %s\\\\\n", weighting))
+  cat(sprintf("\\textbf{Exclusion}: %s\\\\\n\n", exp_excl))
+  
+  subset_df <- subset_df[order(variable)]
+  
+ 
+
+df <- subset_df[,list(var_label,sample_type, control, placebo_type,weighting,                                                                               pre_test_pval_formatted,ATT_overall_formatted, confidence_interval)]
+
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, placebo) 
+  {
+  subset_df <- data[placebo_type == placebo]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for both placebo types
+random_timing_data <- prepare_data(df, "Random timing")
+random_treatment_data <- prepare_data(df, "Random treatment")
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(random_timing_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         c("pre_test_pval_formatted.rt", "ATT_overall_formatted.rt", "confidence_interval.rt"))
+
+setnames(random_treatment_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         c("pre_test_pval_formatted.rtreat", "ATT_overall_formatted.rtreat", "confidence_interval.rtreat"))
+
+# Merge the datasets
+combined_data <- merge(random_timing_data, random_treatment_data, by = c("var_label", "sample_type", "control","weighting"), all = TRUE)
+
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+latex_table <- kable(select_table[order(control,ordering_num)][,-c(2,3,10)]
+                        , format = "latex", escape = FALSE, booktabs = TRUE) %>%
+               kable_styling(latex_options = c("striped", "hold_position")) %>%
+               add_header_above(c(" " = 1,"Random timing" = 3, "Random treatment" = 3)) %>%
+               pack_rows(index = aux_names_vector) 
+
+
+print(latex_table)
+
+
+write(latex_table, file = here::here(empirical_segment,exercise,'summary_tables', 'robustness_summary_table.txt'))
+#print(as.character(latex_table))
+
+```
+
+
+## Spike definition - spike type exercise for the benchmark estimates
+```{r spiketype_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'spike_definition'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('allspikes',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             pre_test_pval,ATT_overall,ATT_overall_se,crit_val, signif,
+                                             signif, spike_type)])
+
+
+```
+
+### Showing the table in html
+```{r spiketype_tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- ""
+  
+  bg_color <-
+    if (significant) 
+      {
+        if (value > 0.03) {
+        "background-color: rgba(0, 128, 0, 0.3);"
+      } else if (value > 0) {
+        "background-color: rgba(144, 238, 144, 0.3);"
+      } else if (value < -0.03) {
+        "background-color: rgba(255, 0, 0, 0.3);"
+      } else if (value < 0) {
+        "background-color: rgba(240, 128, 128, 0.3);"  # light red
+      } else {
+        ""
+      }
+    } else {
+        ""
+      }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,
+                                                           ATT_overall_formatted, confidence_interval)]
+
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, spike_type,weighting,                                                                               pre_test_pval_formatted,ATT_overall_formatted, confidence_interval)]
+
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+  {
+  subset_df <- data[spike_type == spike]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for both placebo types
+
+dataset_list <- list()
+for(sp in unique(df$spike_type))
+{
+spike_data <- prepare_data(df, sp)
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+combined_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F], escape = FALSE) %>%
+                  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+                  add_header_above(c(" " = 1,
+                                     "Spike" = 3, "Spike2" = 3,
+                                     "Spike3" = 3, "Spike4" = 3)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+print(combined_table)
+
+
+```
+
+### Transferable latex table
+```{r spiketype_tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+ 
+   arrow <- ""
+  
+  color <- if(significant)
+    {if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }} else{
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,ATT_overall_formatted,
+                                                           confidence_interval)]
+
+
+
+
+subset_df <- complete_overall_dt
+
+
+
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  cat(sprintf("\\subsection{Spike: %s}\n", spike_type))
+  cat(sprintf("\\textbf{Weighting}: %s\\\\\n", weighting))
+  cat(sprintf("\\textbf{Exclusion}: %s\\\\\n\n", exp_excl))
+  
+  subset_df <- subset_df[order(variable)]
+  
+ 
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+  {
+  subset_df <- data[spike_type == spike]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for both placebo types
+
+dataset_list <- list()
+for(sp in unique(df$spike_type))
+{
+spike_data <- prepare_data(df, sp)
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+  
+latex_table <- kable(select_table[order(control,ordering_num)][, col_sel, with = F]
+                        , format = "latex", escape = FALSE, booktabs = TRUE) %>%
+               kable_styling(latex_options = c("striped", "hold_position")) %>%
+                                 add_header_above(c(" " = 1,
+                                     "Spike" = 3, "Spike2" = 3,
+                                     "Spike3" = 3, "Spike4" = 3)) %>%
+               pack_rows(index = aux_names_vector) 
+
+
+print(latex_table)
+
+
+write(latex_table, file = here::here(empirical_segment,exercise,'summary_tables', 'robustness_summary_table_spiketype.txt'))
+#print(as.character(latex_table))
+
+```
+
+
+## Tech definition - tech type exercise for the benchmark estimates
+```{r techtype_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'spike_definition'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('alltechs',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             pre_test_pval,ATT_overall,ATT_overall_se,crit_val, signif,
+                                             signif, tech_type)])
+
+
+```
+
+### Showing the table in html
+```{r techtype_tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- ""
+  
+  bg_color <-
+    if (significant) 
+      {
+        if (value > 0.03) {
+        "background-color: rgba(0, 128, 0, 0.3);"
+      } else if (value > 0) {
+        "background-color: rgba(144, 238, 144, 0.3);"
+      } else if (value < -0.03) {
+        "background-color: rgba(255, 0, 0, 0.3);"
+      } else if (value < 0) {
+        "background-color: rgba(240, 128, 128, 0.3);"  # light red
+      } else {
+        ""
+      }
+    } else {
+        ""
+      }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,
+                                                           ATT_overall_formatted, confidence_interval)]
+
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, tech_type,weighting,                                                                               pre_test_pval_formatted,ATT_overall_formatted, confidence_interval)]
+
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+  {
+  subset_df <- data[tech_type == spike]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for both placebo types
+
+dataset_list <- list()
+for(sp in unique(df$tech_type))
+{
+spike_data <- prepare_data(df, sp)
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+combined_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F], escape = FALSE) %>%
+                  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+                  add_header_above(c(" " = 1,
+                                     "Old auto rob ai" = 3, "Auto new" = 3,
+                                     "Robot" = 3, "AI" = 3,
+                                     "NDT" = 3)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+print(combined_table)
+
+
+```
+
+### Transferable latex table
+```{r techtype_tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+ 
+   arrow <- ""
+  
+  color <- if(significant)
+    {if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }} else{
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,ATT_overall_formatted,
+                                                           confidence_interval)]
+
+
+
+
+subset_df <- complete_overall_dt
+
+
+
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  cat(sprintf("\\subsection{Spike: %s}\n", spike_type))
+  cat(sprintf("\\textbf{Weighting}: %s\\\\\n", weighting))
+  cat(sprintf("\\textbf{Exclusion}: %s\\\\\n\n", exp_excl))
+  
+  subset_df <- subset_df[order(variable)]
+  
+ 
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+  {
+  subset_df <- data[tech_type == spike]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for both placebo types
+
+dataset_list <- list()
+for(sp in unique(df$tech_type))
+{
+spike_data <- prepare_data(df, sp)
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+  
+latex_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F]
+                        , format = "latex", escape = FALSE, booktabs = TRUE) %>%
+               kable_styling(latex_options = c("striped", "hold_position")) %>%
+                                 add_header_above(c(" " = 1,
+                                     "Old auto rob ai" = 3, "Auto new" = 3,
+                                     "Robot" = 3, "AI" = 3,
+                                     "NDT" = 3)) %>%
+               pack_rows(index = aux_names_vector) 
+
+
+print(latex_table)
+
+
+write(latex_table, file = here::here(empirical_segment,exercise,'summary_tables', 'robustness_summary_table_tech.txt'))
+#print(as.character(latex_table))
+
+```
+
+
+
+## Hidden intermediation - Varying sample for the benchmark estimates
+```{r reex_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'hidden_intermediation'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             pre_test_pval,ATT_overall,ATT_overall_se,crit_val, signif,
+                                             signif, exp_excl)])
+
+
+```
+
+### Showing the table in html
+```{r reex_tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- ""
+  
+  bg_color <-
+    if (significant) 
+      {
+        if (value > 0.03) {
+        "background-color: rgba(0, 128, 0, 0.3);"
+      } else if (value > 0) {
+        "background-color: rgba(144, 238, 144, 0.3);"
+      } else if (value < -0.03) {
+        "background-color: rgba(255, 0, 0, 0.3);"
+      } else if (value < 0) {
+        "background-color: rgba(240, 128, 128, 0.3);"  # light red
+      } else {
+        ""
+      }
+    } else {
+        ""
+      }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, exp_excl, weighting,                                                                               pre_test_pval_formatted,ATT_overall_formatted, confidence_interval)]
+
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+  {
+  subset_df <- data[exp_excl == spike]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+# Prepare data for reexporter exclusion types
+
+reexport_exclusion_dt <-  data.table(ext_name = c('Re-exporters exclusion - None',
+                                                    'Re-exporters exclusion - Ample',
+                                                    'Excluding persistent importers',
+                                                    'Excluding over-sized importers'),
+                                      short_name = c('None','Ample','NoPers','NoOverSize'))
+
+dataset_list <- list()
+for(sp in unique(df$exp_excl))
+{
+spike_data <- prepare_data(df, sp)
+
+sp_short <- reexport_exclusion_dt[ext_name == sp]$short_name
+  
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp_short))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+combined_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F], escape = FALSE) %>%
+                  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+                  add_header_above(c(" " = 1,
+                                     "No Re-export excl." = 3, "Ample Re-export excl" = 3,
+                                     "Excl. pers. importers" = 3, "Excl. over-sized importers" = 3)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+print(combined_table)
+
+
+```
+
+### Transferable latex table
+```{r reex_tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+ 
+   arrow <- ""
+  
+  color <- if(significant)
+    {if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }} else{
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+complete_overall_dt_formatted <- complete_overall_dt[,list(variable,sample_type, control,anticipation,
+                                                           pre_test_pval_formatted,ATT_overall_formatted,
+                                                           confidence_interval)]
+
+
+
+
+subset_df <- complete_overall_dt
+
+
+
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  cat(sprintf("\\subsection{Spike: %s}\n", spike_type))
+  cat(sprintf("\\textbf{Weighting}: %s\\\\\n", weighting))
+  cat(sprintf("\\textbf{Exclusion}: %s\\\\\n\n", exp_excl))
+  
+  subset_df <- subset_df[order(variable)]
+  
+ 
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+  {
+  subset_df <- data[exp_excl == spike]
+  subset_df[, .(var_label, sample_type, weighting, control, 
+                pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+  }
+
+
+reexport_exclusion_dt <-  data.table(ext_name = c('Re-exporters exclusion - None',
+                                      'Re-exporters exclusion - Ample',
+                                      'Excluding persistent importers',
+                                      'Excluding over-sized importers'),
+                                      short_name = c('None','Ample','NoPers','NoOverSize'))
+
+dataset_list <- list()
+for(sp in unique(df$exp_excl))
+{
+spike_data <- prepare_data(df, sp)
+
+sp_short <- reexport_exclusion_dt[ext_name == sp]$short_name
+  
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp_short))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+    
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+  
+latex_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F]
+                        , format = "latex", escape = FALSE, booktabs = TRUE) %>%
+               kable_styling(latex_options = c("striped", "hold_position")) %>%
+                        add_header_above(c(" " = 1,
+                                     "No Re-export excl." = 3, "Ample Re-export excl" = 3,
+                                     "Excl. pers. importers" = 3, "Excl. over-sized importers" = 3)) %>%
+               pack_rows(index = aux_names_vector) 
+
+
+print(latex_table)
+
+
+write(latex_table, file = here::here(empirical_segment,exercise,'summary_tables', 'robustness_summary_table.txt'))
+#print(as.character(latex_table))
+
+```
+
+
+
+## Anticipation - Varying anticipation number for the benchmark estimates
+```{r anticipation_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'anticipation'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,
+                                             pre_test_pval,ATT_overall,ATT_overall_se,crit_val, signif,
+                                             signif)])
+
+
+```
+
+### Showing the table in html
+```{r anticipation_tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- ""
+  
+  bg_color <-
+    if (significant) 
+      {
+        if (value > 0.03) {
+        "background-color: rgba(0, 128, 0, 0.3);"
+      } else if (value > 0) {
+        "background-color: rgba(144, 238, 144, 0.3);"
+      } else if (value < -0.03) {
+        "background-color: rgba(255, 0, 0, 0.3);"
+      } else if (value < 0) {
+        "background-color: rgba(240, 128, 128, 0.3);"  # light red
+      } else {
+        ""
+      }
+    } else {
+        ""
+      }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, anticipation, weighting,                                                                               pre_test_pval_formatted,ATT_overall_formatted, confidence_interval)]
+
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+                {
+                subset_df <- data[anticipation == spike]
+                subset_df[, .(var_label, sample_type, weighting, control, 
+                              pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+                }
+
+# Prepare data for reexporter exclusion types
+
+anticipation_dt <-  data.table(ext_name = c('Ant. years = 1',
+                                      'Ant. years = 2',
+                                      'Ant. years = 3',
+                                      'Ant. years = 4'),
+                                      short_name = c('1','2','3','4'))
+
+dataset_list <- list()
+for(sp in unique(df$anticipation))
+{
+spike_data <- prepare_data(df, sp)
+
+sp_short <- anticipation_dt[ext_name == sp]$short_name
+  
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp_short))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+  
+aux_names_vector <- aux_names_vector[aux_names_vector != 0]  
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+
+                                            
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+combined_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F], escape = FALSE) %>%
+                  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+                  add_header_above(c(" " = 1,
+                                     "1-year anticipation" = 3, "2-years anticipation" = 3,
+                                     "3-year anticipation" = 3, "4-year anticipation" = 3)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+print(combined_table)
+
+
+```
+
+### Transferable latex table
+```{r anticipation_tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+ 
+   arrow <- ""
+  
+  color <- if(significant)
+    {if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }} else{
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT_overall - crit_val*ATT_overall_se)*100,4),', ',
+                                                   round((ATT_overall + crit_val*ATT_overall_se)*100,4),
+                                                   ')')]
+
+
+
+subset_df <- complete_overall_dt
+
+
+
+  spike_type <- unique(subset_df$spike)
+  weighting <- unique(subset_df$weighting)
+  exp_excl <- unique(subset_df$exp_excl)
+  
+  cat(sprintf("\\subsection{Spike: %s}\n", spike_type))
+  cat(sprintf("\\textbf{Weighting}: %s\\\\\n", weighting))
+  cat(sprintf("\\textbf{Exclusion}: %s\\\\\n\n", exp_excl))
+  
+  subset_df <- subset_df[order(variable)]
+  
+ 
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+                {
+                subset_df <- data[anticipation == spike]
+                subset_df[, .(var_label, sample_type, weighting, control, 
+                              pre_test_pval_formatted, ATT_overall_formatted, confidence_interval)]
+                }
+
+# Prepare data for reexporter exclusion types
+
+anticipation_dt <-  data.table(ext_name = c('Ant. years = 1',
+                                      'Ant. years = 2',
+                                      'Ant. years = 3',
+                                      'Ant. years = 4'),
+                                      short_name = c('1','2','3','4'))
+
+dataset_list <- list()
+for(sp in unique(df$anticipation))
+{
+spike_data <- prepare_data(df, sp)
+
+sp_short <- anticipation_dt[ext_name == sp]$short_name
+  
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),
+         paste0(c("pre_test_pval_formatted", "ATT_overall_formatted", "confidence_interval"),'.',sp_short))
+
+dataset_list[[sp]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+  
+aux_names_vector <- aux_names_vector[aux_names_vector != 0]  
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+
+                                            
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+latex_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F]
+                        , format = "latex", escape = FALSE, booktabs = TRUE) %>%
+               kable_styling(latex_options = c("striped", "hold_position")) %>%
+                 add_header_above(c(" " = 1,
+                                     "1-year anticipation" = 3, "2-years anticipation" = 3,
+                                     "3-year anticipation" = 3, "4-year anticipation" = 3)) %>%
+               pack_rows(index = aux_names_vector) 
+
+
+print(latex_table)
+
+
+write(latex_table, file = here::here(empirical_segment,exercise,'summary_tables', 'robustness_summary_table.txt'))
+#print(as.character(latex_table))
+
+```
+
+
+
+
+## Vintages - Varying anticipation number for the benchmark estimates
+```{r vintages_dt_import, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#### Set folders 
+empirical_segment <- 'DiD_results'
+exercise <- 'vintages_exercises'
+
+#### Import results
+estimates_file <- list.files(here:::here(empirical_segment,exercise)) ## store the results estimates file names
+
+file_names <- as.data.frame(cbind(files = estimates_file,
+                                  file_id = str_replace(estimates_file,"_CS_att_results\\.RData$", "")))
+setDT(file_names)
+
+
+# Extracting the spike, technology, and variable name
+names_extractor <- function(filename)
+{
+return(data.frame(spike = str_extract(filename, "spike\\d?"),
+                  technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)*?(?=_(all|ln|sh)_)"),
+                  #technology = str_extract(filename, "(?<=spike\\d?_)[^_]+(?:_[^_]+)?"),
+                  var_name = str_extract(filename, "(all|ln|sh)_[^_]+(?:_[^_]+)*")))
+}  
+
+file_names[, spike := names_extractor(file_id)$spike]
+file_names[, var := names_extractor(file_id)$var_name]
+file_names[, techn := names_extractor(file_id)$technology]
+
+### Associate the variable name to the variable label
+var_dict <- fread(here:::here('var_dict.csv')) ## conversion dictionary for output variables name
+setDT(var_dict)
+extract_label <- function(var) var_dict[var_name == var]$var_label
+extract_label <- Vectorize(extract_label)
+file_names[, var_label := extract_label(var)]
+
+file_names <- file_names[!is.na(var)]
+
+load(here:::here(empirical_segment,exercise,estimates_file[grepl('spike2',estimates_file) &
+                                                           grepl('ln_dip',estimates_file)]))
+
+
+
+export_dt[ ,signif_overall := signif]
+export_dt[ ,signif_overall := signif]
+
+
+
+export_dt[ ,signif := ifelse(ATT - crit_val*ATT_se > 0 |
+                             ATT + crit_val*ATT_se < 0,  1,0)]
+export_dt[ ,signif := ifelse(ATT - crit_val*ATT_se > 0 |
+                                   ATT + crit_val*ATT_se < 0,  1,0)]
+
+complete_overall_dt <- unique(export_dt[,list(spike,variable,
+                                             sample_type,exp_excl,balanced_panel,
+                                             weighting,control, anticipation,group,
+                                             pre_test_pval,ATT_overall,ATT_overall_se, ATT, ATT_se,crit_val,
+                                             signif,signif,
+                                             signif_overall, signif_overall)])
+
+
+```
+
+### Showing the table in html
+```{r vintages_tabulating_overall_ATT, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- Vectorize(function(value)
+{
+  width <- paste0(round(value * 100), "%")
+  as.character(htmltools::tags$div(
+    style = paste("background-color: rgba(0, 0, 255, 0.1); width:", width, "; height: 20px;"),
+    value
+  ))
+})
+
+
+format_att <- Vectorize(function(value, significant) {
+  arrow <- ""
+  
+  bg_color <-
+    if (significant) 
+      {
+        if (value > 0.03) {
+        "background-color: rgba(0, 128, 0, 0.3);"
+      } else if (value > 0) {
+        "background-color: rgba(144, 238, 144, 0.3);"
+      } else if (value < -0.03) {
+        "background-color: rgba(255, 0, 0, 0.3);"
+      } else if (value < 0) {
+        "background-color: rgba(240, 128, 128, 0.3);"  # light red
+      } else {
+        ""
+      }
+    } else {
+        ""
+      }
+
+  formatted_value <- if (significant) {
+    paste0("<b>", sprintf("%.4f",value*100), "% *</b>")
+  } else {
+    paste0(sprintf("%.4f", value*100), "%")
+  }
+  
+  as.character(htmltools::tags$div(
+    style = paste(bg_color, "width: 100%; padding: 5px;"),
+    htmltools::HTML(paste0(formatted_value, " ", arrow))
+  ))
+})
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_formatted := format_att(ATT,signif)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif_overall)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT - crit_val*ATT_se)*100,4),', ',
+                                                   round((ATT + crit_val*ATT_se)*100,4),
+                                                   ')')]
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, weighting, group,                                                                              pre_test_pval_formatted,ATT_overall_formatted, ATT_formatted, confidence_interval)]
+
+df <- df[group != 2019]
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+                {
+                subset_df <- data[group == spike]
+                subset_df[, .(var_label, sample_type, weighting, control, 
+                              pre_test_pval_formatted, ATT_overall_formatted, ATT_formatted, confidence_interval)]
+                }
+
+# Prepare data for reexporter exclusion types
+
+dataset_list <- list()
+for(sp in unique(df$group))
+{
+spike_data <- prepare_data(df, sp)
+
+sp_short <- as.character(sp)  
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("ATT_formatted", "confidence_interval"),
+         paste0(c("ATT_formatted", "confidence_interval"),'.',sp_short))
+
+dataset_list[[sp_short]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type",
+                                                    "pre_test_pval_formatted","ATT_overall_formatted", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+  
+aux_names_vector <- aux_names_vector[aux_names_vector != 0]  
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+
+                                            
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+combined_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F], escape = FALSE) %>%
+                  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+                  add_header_above(c(" " = 3,
+                                     "2013-adopeters" = 2, "2014-adopeters" = 2,
+                                     "2015-adopeters" = 2, "2016-adopeters" = 2,
+                                     "2017-adopeters" = 2, "2018-adopeters" = 2)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+print(combined_table)
+
+
+```
+
+### Transferable latex table
+```{r vintages_tabulating_overall_ATT_latex, echo=FALSE, fig.height=10, fig.width=16, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+
+
+complete_overall_dt[,var_label := var_dict[var_name == unique(variable)]$var_label , by = variable]
+complete_overall_dt[,var_label := gsub(' \\(log\\)','',var_label)]
+
+### Create a directory where to save the tables
+dir.create(here:::here(empirical_segment,exercise,'summary_tables'))
+
+
+
+format_pval <- function(value) {
+  width <- round(value * 100)
+  sprintf("\\colorbox{blue!10}{\\makebox[%d\\textwidth][l]{%.5f}}", width, value)
+}
+
+format_att <- function(value, significant) {
+ 
+   arrow <- ""
+  
+  color <- if(significant)
+    {if (value > 0.03) {
+    "green!30"
+  } else if (value > 0) {
+    "green!15"
+  } else if (value < -0.03) {
+    "red!30"
+  } else if (value < 0) {
+    "red!15"
+  } else {
+    "white"
+  }} else{
+    "white"
+  }
+
+  formatted_value <- if (significant) {
+    sprintf("\\textbf{%.4f\\%%*}", value*100)
+  } else {
+    sprintf("%.4f\\%%", value*100)
+  }
+  
+  sprintf("\\colorbox{%s}{%s %s}", color, formatted_value, arrow)
+}
+
+
+
+complete_overall_dt[,pre_test_pval_formatted := sapply(pre_test_pval,format_pval)]
+complete_overall_dt[,ATT_formatted := format_att(ATT,signif)]
+complete_overall_dt[,ATT_overall_formatted := format_att(ATT_overall,signif_overall)]
+complete_overall_dt[,confidence_interval := paste0('(',
+                                                   round((ATT - crit_val*ATT_se)*100,4),', ',
+                                                   round((ATT + crit_val*ATT_se)*100,4),
+                                                   ')')]
+
+
+
+subset_df <- complete_overall_dt
+
+# Extract additional heading information
+spike_type <- unique(subset_df$spike)
+weighting <- unique(subset_df$weighting)
+exp_excl <- unique(subset_df$exp_excl)
+
+# Add custom heading
+cat(paste0("### Spike: ", spike_type, "\n"))
+cat(paste0("**Weighting**: ", weighting, "  \n"))
+cat(paste0("**Exclusion**: ", exp_excl, "  \n\n"))
+
+subset_df <- subset_df[order(variable)]
+# Create the formatted table
+
+  
+
+df <- subset_df[,list(var_label,sample_type, control, weighting, group,                                                                              pre_test_pval_formatted,ATT_overall_formatted, ATT_formatted, confidence_interval)]
+
+df <- df[group != 2019]
+# Assuming your data is in a data.table called 'df'
+
+# Function to prepare data for a specific placebo_type
+prepare_data <- function(data, spike) 
+                {
+                subset_df <- data[group == spike]
+                subset_df[, .(var_label, sample_type, weighting, control, 
+                              pre_test_pval_formatted, ATT_overall_formatted, ATT_formatted, confidence_interval)]
+                }
+
+# Prepare data for reexporter exclusion types
+
+dataset_list <- list()
+for(sp in unique(df$group))
+{
+spike_data <- prepare_data(df, sp)
+
+sp_short <- as.character(sp)  
+
+# Add suffixes to column names to distinguish between placebo types
+setnames(spike_data, 
+         c("ATT_formatted", "confidence_interval"),
+         paste0(c("ATT_formatted", "confidence_interval"),'.',sp_short))
+
+dataset_list[[sp_short]] <- spike_data
+}
+
+
+combined_data <- Reduce(function(x, y) merge(x, y,
+                                             all=T,
+                                             by = c("var_label", "sample_type",
+                                                    "pre_test_pval_formatted","ATT_overall_formatted", "control","weighting")),
+                        dataset_list, accumulate=F)
+
+# Create and print the combined table
+select_table <- combined_data[order(control,sample_type,weighting),-1]
+select_table[, sample_type := paste0(sample_type,'-',weighting)]
+
+
+aux_names_vector <- c(sum(select_table$control == 'nevertreated'),sum(select_table$control == 'notyettreated'))
+names(aux_names_vector) <- c('nevertreated','notyettreated')
+  
+aux_names_vector <- aux_names_vector[aux_names_vector != 0]  
+
+
+select_ordering <- function(x)   as.integer(sapply(x, function(y) dict_sample_type[string == y,2]))
+
+                                            
+select_table[,ordering_num :=  select_ordering(sample_type)]
+
+col_sel <- colnames(select_table)[!(colnames(select_table) %in% c('control','weighting','ordering_num'))]
+
+
+latex_table <- kable(select_table[order(control,ordering_num)][,col_sel, with = F]
+                        , format = "latex", escape = FALSE, booktabs = TRUE) %>%
+               kable_styling(latex_options = c("striped", "hold_position")) %>%
+                  add_header_above(c(" " = 3,
+                                     "2013-adopeters" = 2, "2014-adopeters" = 2,
+                                     "2015-adopeters" = 2, "2016-adopeters" = 2,
+                                     "2017-adopeters" = 2, "2018-adopeters" = 2)) %>%
+                  pack_rows(index = aux_names_vector) 
+
+
+print(latex_table)
+
+
+write(latex_table, file = here::here(empirical_segment,exercise,'summary_tables', 'robustness_summary_table.txt'))
+#print(as.character(latex_table))
+
+```
+
+
+
+
